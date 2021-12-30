@@ -4,14 +4,14 @@ import (
 	"bytes"
 	"fmt"
 	"io"
-	"io/ioutil"
-	"log"
 	"net/http"
 	"os"
 	"regexp"
+	"time"
 
 	"github.com/gocolly/colly"
 	"github.com/tidwall/gjson"
+	"github.com/valyala/fasthttp"
 )
 
 var ua string = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/96.0.4664.93 Safari/537.36"
@@ -23,11 +23,23 @@ func main() {
 	// uid := 6890797
 	uid := 32548944
 
+	start := time.Now()
+
 	res := geturl(int64(uid))
+
+	ch := make(chan string)
 
 	fileList := getpicture(res)
 
-	downpicture(fileList)
+	for _, url := range fileList {
+		go downpicture(url, ch)
+	}
+
+	for range fileList {
+		fmt.Println(<-ch) // receive from channel ch
+
+	}
+	fmt.Printf("%.2fs elapsed\n", time.Since(start).Seconds())
 
 }
 
@@ -74,7 +86,6 @@ func getpicture(urlList []string) []string {
 			for _, v := range u {
 				url := gjson.Get(v.Raw, "urls.original").String()
 				plist = append(plist, url)
-				log.Println(url)
 			}
 		})
 
@@ -84,27 +95,38 @@ func getpicture(urlList []string) []string {
 	return removeDuplicateElement(plist)
 }
 
-func downpicture(urlList []string) {
-	if len(urlList) == 0 {
+func downpicture(url string, ch chan<- string) {
+	start := time.Now()
+	// client := &http.Client{}
+	client := &fasthttp.Client{}
+	// req, _ := http.NewRequest("GET", url, nil)
+	var req fasthttp.Request
+	req.SetRequestURI(url)
+	req.Header.Add("referer", "https://www.pixiv.net/")
+	req.Header.Add("user-agnet", ua)
+	var resp fasthttp.Response
+
+	err := client.Do(&req, &resp)
+	if err != nil {
+		ch <- fmt.Sprintf("while reading %s: %v", url, err)
 		return
 	}
 
-	for _, v := range urlList {
-		client := &http.Client{}
-		req, _ := http.NewRequest("GET", v, nil)
-		req.Header.Add("referer", "https://www.pixiv.net/")
-		req.Header.Add("user-agnet", ua)
-		resp, _ := client.Do(req)
-		body, _ := ioutil.ReadAll(resp.Body)
+	reg, _ := regexp.Compile(`([^\\/]+)\.(jpg|png)`)
+	name := reg.FindStringSubmatch(url)[0]
+	fmt.Println(name)
+	out, _ := os.Create("avatar/" + name)
 
-		reg, _ := regexp.Compile(`([^\\/]+)\.(jpg|png)`)
-		name := reg.FindStringSubmatch(v)[0]
-		fmt.Println(name)
-		out, _ := os.Create("avatar/" + name)
+	data := bytes.NewReader(resp.Body())
 
-		io.Copy(out, bytes.NewReader(body))
-
+	size, err := io.Copy(out, data)
+	if err != nil {
+		ch <- fmt.Sprintf("while reading %s: %v", url, err)
+		return
 	}
+	secs := time.Since(start).Seconds()
+	ch <- fmt.Sprintf("%.2fs  %7d  %s", secs, size, url)
+
 }
 
 func removeDuplicateElement(languages []string) []string {
