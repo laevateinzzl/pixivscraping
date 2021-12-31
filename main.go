@@ -1,21 +1,22 @@
 package main
 
 import (
-	"bytes"
 	"fmt"
 	"io"
 	"net/http"
 	"os"
 	"regexp"
+	"sync"
 	"time"
 
 	"github.com/gocolly/colly"
 	"github.com/tidwall/gjson"
-	"github.com/valyala/fasthttp"
 )
 
 var ua string = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/96.0.4664.93 Safari/537.36"
 var cookie string = ""
+
+var wg sync.WaitGroup
 
 func main() {
 	// uid := 6657532
@@ -40,6 +41,7 @@ func main() {
 
 	}
 	fmt.Printf("%.2fs elapsed\n", time.Since(start).Seconds())
+	wg.Wait()
 
 }
 
@@ -96,17 +98,15 @@ func getpicture(urlList []string) []string {
 }
 
 func downpicture(url string, ch chan<- string) {
+	wg.Add(1)
+	defer wg.Done()
 	start := time.Now()
-	// client := &http.Client{}
-	client := &fasthttp.Client{}
-	// req, _ := http.NewRequest("GET", url, nil)
-	var req fasthttp.Request
-	req.SetRequestURI(url)
+	client := &http.Client{}
+	req, _ := http.NewRequest("GET", url, nil)
 	req.Header.Add("referer", "https://www.pixiv.net/")
 	req.Header.Add("user-agnet", ua)
-	var resp fasthttp.Response
 
-	err := client.Do(&req, &resp)
+	resp, err := client.Do(req)
 	if err != nil {
 		ch <- fmt.Sprintf("while reading %s: %v", url, err)
 		return
@@ -117,9 +117,7 @@ func downpicture(url string, ch chan<- string) {
 	fmt.Println(name)
 	out, _ := os.Create("avatar/" + name)
 
-	data := bytes.NewReader(resp.Body())
-
-	size, err := io.Copy(out, data)
+	size, err := io.Copy(out, resp.Body)
 	if err != nil {
 		ch <- fmt.Sprintf("while reading %s: %v", url, err)
 		return
